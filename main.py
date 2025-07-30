@@ -94,7 +94,7 @@ def process_file(input_filename, output_path, lon_min = -180, lon_max = 180, lat
     for i in range(size_lon):
         for j in range(size_lev):
             date = datetime.datetime.strptime(str(dt_data[i]).split("T")[0], "%Y-%m-%d").date()
-            if date > datetime.date.today() - relativedelta(month=monthes_ago):
+            if date > datetime.date.today() - datetime.timedelta(days=days_ago):
                 if lats[i] > lat_min and lats[i] < lat_max and lons[i] > lon_min and lons[i] < lon_max:
                     if str(dt_data[i]).split("T")[0] not in finish_dict.keys():
                         finish_dict[str(dt_data[i]).split("T")[0]] = []
@@ -144,7 +144,7 @@ if __name__ == "__main__":
         help="Путь для сохранения выходных файлов (по умолчанию: ./)."
     )
     parser.add_argument(
-        "--monthes_ago", "-m",
+        "--days_ago", "-d",
         required=False,
         default=2,
         help="Путь к директории с файлами netcdf."
@@ -155,7 +155,7 @@ if __name__ == "__main__":
     lat_max = parser.parse_args().max_lat
     lon_min = parser.parse_args().min_lon
     lon_max = parser.parse_args().max_lon
-    monthes_ago = parser.parse_args().monthes_ago
+    days_ago = parser.parse_args().days_ago
 
 
     # input_path = "C:/Users/glebm/PyCharmProjects/ArgoGeoFilter/data/check2"
