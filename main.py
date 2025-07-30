@@ -5,7 +5,6 @@ from os import mkdir
 import datetime
 import numpy as np
 import xarray as xr
-from dateutil.relativedelta import relativedelta
 
 def getDepth(pres, temp, salt):
     return 99999
