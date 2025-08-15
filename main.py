@@ -35,7 +35,6 @@ class Record:
             date: JULD
             platform_number: PLATFORM_NUMBER.
             cycle_number: CYCLE_NUMBER.
-
     """
     def __init__(self, lat, lon, depth, temp, pres, psal, datetime, platform_number, cycle_number):
         self.lat = lat
