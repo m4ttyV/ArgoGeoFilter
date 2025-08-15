@@ -5,12 +5,39 @@ from os import mkdir
 import datetime
 import numpy as np
 import xarray as xr
+import gsw
 
-def getDepth(pres, temp, salt):
-    return 99999
+def getDepth(pres, lat):
+    """
+        Processes the input netCDF file
+
+        Args:
+            pres: pressure from netCDF.
+            lat: latitude from netCDF.
+
+        Returns:
+           float Depth calculated from the input netCDF.
+
+    """
+    depth = gsw.z_from_p(pres, lat)
+    return float(-depth)
 
 class Record:
-    def __init__(self, lat, lon, depth, temp, pres, psal, datetime, platform_number, cycle_number  ):
+    """
+        The Record field for final_dict (description of the fields - names of relevant fields from netCDF files)
+        Args:
+            lat: LONGITUDE.
+            lon: LATITUDE.
+            depth: calculated by getDepth() function.
+            temp: TEMP.
+            pres: PRES.
+            psal: PSAL.
+            date: JULD
+            platform_number: PLATFORM_NUMBER.
+            cycle_number: CYCLE_NUMBER.
+
+    """
+    def __init__(self, lat, lon, depth, temp, pres, psal, datetime, platform_number, cycle_number):
         self.lat = lat
         if lon < 0:
             lon += 360
@@ -31,9 +58,17 @@ class Record:
         self.platform_number = str(platform_number).strip('b').strip('\'')
         self.cycle_number = cycle_number
 
-
-
 def csv_gen(filedir, finish_dict):
+    """
+        Generate csv file with output data from "finish_dict".
+
+        Args:
+            filedir (str): Path to the .nc file.
+            finish_dict: Dictionary of finished records.
+
+        Returns:
+            Generate CSV-file with output data.
+    """
     # Проверяем наличие директории
     if not os.path.exists(filedir):
         mkdir(filedir)
@@ -74,8 +109,26 @@ def csv_gen(filedir, finish_dict):
                     platform_number, cycle_number, lat, lon, datetime, depth, pres, temp, sal
                 ])
 
-def process_file(input_filename, output_path, lon_min = -180, lon_max = 180, lat_min = -90, lat_max = 90, monthes_ago = 2):
+def process_file(input_filename, output_path, lon_min = -180, lon_max = 180, lat_min = -90, lat_max = 90, days_ago = 60):
+    """
+        Processes the input netCDF file
 
+        Args:
+            input_filename (str): Path to the .nc file.
+            output_path (str): Path to the output folder.
+            lon_min (float): The minimum longitude.
+            lon_max (float): The maximum longitude.
+            lat_min (float): The minimum latitude.
+            lat_max (float): The maximum latitude.
+            days_ago (int): The number of days defining the interval from today to the maximum allowed date from the JULD field of the input file
+
+        Returns:
+            passes "output_path", "finish_dict" to the "csv_gen" function
+            finish_dict (dict): Dictionary of finished records.
+
+        Raises:
+            ValueError: If required sections or data are missing in the file.
+    """
     finish_dict = dict()
 
     ds = xr.open_dataset(input_filename)
@@ -99,7 +152,7 @@ def process_file(input_filename, output_path, lon_min = -180, lon_max = 180, lat
                         finish_dict[str(dt_data[i]).split("T")[0]] = []
                     finish_dict[str(dt_data[i]).split("T")[0]].append(
                         Record(lats[i], lons[i],
-                               getDepth(pres[i, j], temp[i,j],  psal[i, j]),
+                               getDepth(pres[i, j], lats[i]),
                                temp[i,j], pres[i, j], psal[i, j],
                                str(dt_data[i]).split('.')[0], platform_number[i], cycle_number[i]))
     ds.close()
@@ -145,20 +198,17 @@ if __name__ == "__main__":
     parser.add_argument(
         "--days_ago", "-d",
         required=False,
-        default=2,
+        default=120,
         help="Путь к директории с файлами netcdf."
     )
-    input_path = parser.parse_args().input
-    output_path = parser.parse_args().output
+    input_path = parser.parse_args().input_dir
+    output_path = parser.parse_args().output_dir
     lat_min = parser.parse_args().min_lat
     lat_max = parser.parse_args().max_lat
     lon_min = parser.parse_args().min_lon
     lon_max = parser.parse_args().max_lon
     days_ago = parser.parse_args().days_ago
 
-
-    # input_path = "C:/Users/glebm/PyCharmProjects/ArgoGeoFilter/data/check2"
-    # output_path = "./output/DR"
 
     processed_files = dict()
     new_processed_files = dict()
@@ -178,7 +228,7 @@ if __name__ == "__main__":
         if file.endswith(".nc") and file not in processed_files.keys():
             print("Обработка файла: ", file)
             # try:
-            process_file(input_path + file, output_path, lon_min, lon_max, lat_min, lat_max, monthes_ago)
+            process_file(input_path + file, output_path, lon_min, lon_max, lat_min, lat_max, days_ago)
             new_processed_files[file] = True
 
     with open(log_path, 'a', newline='', encoding='utf-8-sig') as f:
