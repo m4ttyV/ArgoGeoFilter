@@ -92,7 +92,7 @@ def csv_gen(filedir, finish_dict):
                     lat = "{0:.3f}".format(item.lat)
                 if item.lon != "None":
                     lon = "{0:.3f}".format(item.lon)
-                depth = item.depth
+                depth =  "{0:.3f}".format(item.depth)
                 if item.temp != "None":
                     temp = "{0:.3f}".format(item.temp)
                 if item.pres != "None":
