@@ -77,7 +77,7 @@ def getDepth_unesco(pressure, salinity, temperature, latitude):
 
     for i in range(max_iter):
         # Оцениваем давление на этой глубине
-        p_estimated = pressure
+        p_estimated = depth_guess * rho_previous * g / 10000 
 
         # Рассчитываем плотность
         rho = seawater_density_unesco(salinity, temperature, p_estimated)
