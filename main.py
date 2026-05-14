@@ -191,20 +191,57 @@ def csv_gen(filedir, finish_dict):
                     sal
                 ])
 
-def is_file_recent_by_creation_time(file_path: str, max_age_days: int = 14) -> bool:
+def get_file_datetime(file_path: str) -> datetime.datetime:
     """
-    Проверяет, что дата создания файла отличается от текущей даты
+    Возвращает дату файла для фильтрации.
+
+    Сначала пытается взять дату из имени Argo-файла формата
+    DYYYYMMDD_... или RYYYYMMDD_..., например D20260506_prof_1.nc.
+    Это стабильнее для Linux, чем os.path.getctime().
+
+    Если дата из имени не распознана, используется дата последнего
+    изменения файла.
+    """
+    base_name = os.path.basename(file_path)
+
+    if len(base_name) >= 9 and base_name[0] in {"D", "R"}:
+        date_part = base_name[1:9]
+        try:
+            return datetime.datetime.strptime(date_part, "%Y%m%d")
+        except ValueError:
+            pass
+
+    return datetime.datetime.fromtimestamp(os.path.getmtime(file_path))
+
+
+def is_file_recent(file_path: str, max_age_days: int = 14) -> bool:
+    """
+    Проверяет, что дата файла отличается от текущей даты
     не больше чем на max_age_days дней.
-
-    Примечание: на Windows os.path.getctime() возвращает время создания файла.
-    На Linux/Unix это обычно время последнего изменения метаданных файла,
-    так как настоящая дата создания доступна не во всех файловых системах.
     """
-    file_creation_dt = datetime.datetime.fromtimestamp(os.path.getctime(file_path))
+    file_dt = get_file_datetime(file_path)
     current_dt = datetime.datetime.now()
-    return abs(current_dt - file_creation_dt) <= datetime.timedelta(days=max_age_days)
+    return abs(current_dt - file_dt) <= datetime.timedelta(days=max_age_days)
 
-def process_file(input_filename: str, output_path: str, lon_min = -180, lon_max = 180, lat_min = -90, lat_max = 90, days_ago = 360):
+def get_numeric_values(ds: xr.Dataset, var_name: str, prefer_adjusted: bool = True):
+    """
+    Возвращает числовой массив переменной.
+
+    Если prefer_adjusted=True и в Argo-файле есть VAR_ADJUSTED, то берём
+    скорректированные значения. Там, где они отсутствуют/NaN, подставляем
+    исходную переменную VAR.
+    """
+    raw = ds[var_name].values
+    adjusted_name = f"{var_name}_ADJUSTED"
+
+    if prefer_adjusted and adjusted_name in ds:
+        adjusted = ds[adjusted_name].values
+        if np.issubdtype(adjusted.dtype, np.number):
+            return np.where(np.isfinite(adjusted), adjusted, raw)
+
+    return raw
+
+def process_file(input_filename: str, output_path: str, lon_min=-180, lon_max=180, lat_min=-90, lat_max=90, days_ago=360, prefer_adjusted=True):
     """
         Processes the input netCDF file
 
@@ -230,9 +267,9 @@ def process_file(input_filename: str, output_path: str, lon_min = -180, lon_max 
 
     lons = ds['LONGITUDE'].values
     lats = ds['LATITUDE'].values
-    temp = ds['TEMP'].values
-    pres = ds['PRES'].values
-    psal = ds['PSAL'].values
+    temp = get_numeric_values(ds, 'TEMP', prefer_adjusted=prefer_adjusted)
+    pres = get_numeric_values(ds, 'PRES', prefer_adjusted=prefer_adjusted)
+    psal = get_numeric_values(ds, 'PSAL', prefer_adjusted=prefer_adjusted)
     dt_data = ds['JULD'].values
     platform_number = ds['PLATFORM_NUMBER'].values
     cycle_number = ds['CYCLE_NUMBER'].values
@@ -315,13 +352,7 @@ if __name__ == "__main__":
         default=120,
         help="Количество дней для фильтрации записей внутри netCDF по полю JULD."
     )
-    parser.add_argument(
-        "--file_max_age_days", "-fad",
-        required=False,
-        type=int,
-        default=14,
-        help="Максимальный возраст файла в днях по дате создания. По умолчанию: 14."
-    )
+
     args = parser.parse_args()
 
     input_path = args.input_dir
@@ -331,7 +362,14 @@ if __name__ == "__main__":
     lon_min = args.min_lon
     lon_max = args.max_lon
     days_ago = args.days_ago
-    file_max_age_days = args.file_max_age_days
+    # Фильтр по возрасту файла: не старше 14 дней.
+    # Дополнительный параметр запуска для этого не нужен.
+    file_max_age_days = 14
+
+    # На Linux дата создания файла определяется ненадёжно, поэтому берём дату
+    # из имени Argo-файла DYYYYMMDD_... / RYYYYMMDD_..., если она есть.
+    # Если дата в имени не распознана, используем дату изменения файла.
+    prefer_adjusted = True
 
 
     processed_files = dict()
@@ -357,12 +395,17 @@ if __name__ == "__main__":
         if file in processed_files.keys():
             continue
 
-        if not is_file_recent_by_creation_time(file_full_path, file_max_age_days):
-            file_creation_dt = datetime.datetime.fromtimestamp(os.path.getctime(file_full_path))
-            print(f"Пропуск файла по дате создания: {file} ({file_creation_dt:%Y-%m-%d %H:%M:%S})")
+        if not is_file_recent(file_full_path, file_max_age_days):
+            file_dt = get_file_datetime(file_full_path)
+            print(f"Пропуск файла по дате файла: {file} ({file_dt:%Y-%m-%d %H:%M:%S})")
             continue
 
         print("Обработка файла: ", file)
         # try:
-        process_file(file_full_path, output_path, lon_min, lon_max, lat_min, lat_max, days_ago)
+        process_file(file_full_path, output_path, lon_min, lon_max, lat_min, lat_max, days_ago, prefer_adjusted=prefer_adjusted)
         new_processed_files[file] = True
+
+    if new_processed_files:
+        with open(log_path, 'a', encoding='utf-8-sig') as f:
+            for file in new_processed_files:
+                f.write(file + "\n")
