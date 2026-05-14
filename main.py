@@ -346,7 +346,7 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--days_ago", "-d",
+        "--file_max_age_days", "-d",
         required=False,
         type=int,
         default=120,
@@ -361,7 +361,7 @@ if __name__ == "__main__":
     lat_max = args.max_lat
     lon_min = args.min_lon
     lon_max = args.max_lon
-    days_ago = args.days_ago
+    days_ago = args.file_max_age_days
     # Фильтр по возрасту файла: не старше 14 дней.
     # Дополнительный параметр запуска для этого не нужен.
     file_max_age_days = 14
