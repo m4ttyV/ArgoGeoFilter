@@ -5,7 +5,6 @@ from os import mkdir
 import datetime
 import numpy as np
 import xarray as xr
-import gsw
 
 
 def seawater_density_unesco(salinity, temperature, pressure):
@@ -61,52 +60,21 @@ def seawater_density_unesco(salinity, temperature, pressure):
 
     return rho
 
-def getDepth_unesco(pressure, salinity, temperature, latitude):
+def getDepth_iter(pressure, salinity, temperature, last_depth, prev_pressure, latitude):
+    # Переделать. Заходить с вертикальными профилями (передавать массив) находим на каждом уровне плотность. Идем по уровням и находим плотности, где все значения присутствуют.
+    # Для самой верхней точки находим глубину по имеющейся формуле. Далее мы определяем глубину слоя и суммируем
     """
       Расчет глубины с учетом плотности, зависящей от T, S, P
     """
-    # Расчет гравитации
     lat_rad = np.radians(latitude)
     g = 9.780318 * (1 + 0.0053024 * np.sin(lat_rad) ** 2
                     - 0.0000058 * np.sin(2 * lat_rad) ** 2)
+    # Рассчитываем плотность
+    rho = seawater_density_unesco(salinity, temperature, pressure)
+    delta_depth = (pressure - prev_pressure) * 10000 / (rho * g)
 
-    # Расчет плотности на данной глубине (итеративно)
-    depth_guess = pressure  # начальное приближение
-    tolerance = 0.001
-    max_iter = 10
-
-    for i in range(max_iter):
-        # Оцениваем давление на этой глубине
-        p_estimated = depth_guess * rho_previous * g / 10000 
-
-        # Рассчитываем плотность
-        rho = seawater_density_unesco(salinity, temperature, p_estimated)
-
-        # Пересчитываем глубину
-        depth_new = pressure * 10000 / (rho * g)
-
-        # Проверяем сходимость
-        if abs(depth_new - depth_guess) < tolerance:
-            break
-
-        depth_guess = depth_new
-
-    return depth_new
-
-def getDepth(pres, lat):
-    """
-        Calculating depth by pressure and latitude
-
-        Args:
-            pres: pressure from netCDF.
-            lat: latitude from netCDF.
-
-        Returns:
-           Depth.
-
-    """
-    depth = gsw.z_from_p(pres, lat)
-    return float(-depth)
+    result = delta_depth + last_depth
+    return result
 
 class Record:
     """
@@ -122,7 +90,7 @@ class Record:
             platform_number: PLATFORM_NUMBER.
             cycle_number: CYCLE_NUMBER.
     """
-    def __init__(self, lat, lon, depth, temp, pres, psal, datetime, platform_number, cycle_number):
+    def __init__(self, lat, lon, depth, temp, pres, psal, dt, platform_number, cycle_number):
         self.lat = lat
         if lon < 0:
             lon += 360
@@ -139,7 +107,7 @@ class Record:
         if np.isnan(psal):
             psal = "None"
         self.psal = psal
-        self.datetime = datetime
+        self.dt = dt
         self.platform_number = str(platform_number).strip('b').strip('\'')
         self.cycle_number = cycle_number
 
@@ -154,48 +122,89 @@ def csv_gen(filedir, finish_dict):
         Returns:
             Generate CSV-file with output data.
     """
-    # Проверяем наличие директории
-    if not os.path.exists(filedir):
-        mkdir(filedir)
-    # Проверяем наличие файлов с необходимой датой
-    for dates in finish_dict.keys():
-        newfilename = filedir + dates + ".csv"
-        if not os.path.exists(newfilename):
-            with open(newfilename, 'w', newline='', encoding='utf-8-sig') as csvfile:
-                writer = csv.writer(csvfile, delimiter=';')
-                writer.writerow(
-                    ["Platform_number", "Cycle number", "Latitude", "Longitude",
-                     "Datetime", "Depth", "Pressure", "Temperature", "Salinity"])
+    current_dt = datetime.datetime.now()
+    year = current_dt.strftime("%Y")
+    month = current_dt.strftime("%m")
+
+    output_dir = os.path.join(filedir, year, month)
+    os.makedirs(output_dir, exist_ok=True)
 
     for dates in finish_dict:
-        file = filedir + dates + ".csv"
-        with open(file, 'a', newline='', encoding='utf-8-sig') as csvfile:
+        file_path = os.path.join(output_dir, dates + ".csv")
+
+        file_exists = os.path.exists(file_path)
+
+        with open(file_path, 'a', newline='', encoding='utf-8-sig') as csvfile:
             writer = csv.writer(csvfile, delimiter=';')
-            for item in finish_dict[dates]:
-                lat, lon, depth, temp, pres, sal, datetime, platform_number = \
-                    99999, 99999, 99999, 99999, 99999, 99999, 99999, 99999
-                if item.lat != "None":
-                    lat = "{0:.3f}".format(item.lat)
-                if item.lon != "None":
-                    lon = "{0:.3f}".format(item.lon)
-                if item.depth != "None":
-                    depth =  "{0:.3f}".format(item.depth)
-                if item.temp != "None":
-                    temp = "{0:.3f}".format(item.temp)
-                if item.pres != "None":
-                    pres = "{0:.3f}".format(item.pres)
-                if item.psal != "None":
-                    sal = "{0:.3f}".format(item.psal)
-                datetime = item.datetime
-                platform_number = item.platform_number
-                cycle_number = item.cycle_number
-                if temp == 99999 and pres == 99999 and sal == 99999:
-                    continue
+
+            if not file_exists:
                 writer.writerow([
-                    platform_number, cycle_number, lat, lon, datetime, depth, pres, temp, sal
+                    "Platform_number",
+                    "Cycle number",
+                    "Latitude",
+                    "Longitude",
+                    "Datetime",
+                    "Depth",
+                    "Pressure",
+                    "Temperature",
+                    "Salinity"
                 ])
 
-def process_file(input_filename, output_path, lon_min = -180, lon_max = 180, lat_min = -90, lat_max = 90, days_ago = 60):
+            for item in finish_dict[dates]:
+                lat, lon, depth, temp, pres, sal, record_datetime, platform_number = \
+                    99999, 99999, 99999, 99999, 99999, 99999, 99999, 99999
+
+                if item.lat != "None":
+                    lat = "{0:.3f}".format(item.lat)
+
+                if item.lon != "None":
+                    lon = "{0:.3f}".format(item.lon)
+
+                if item.depth != "None":
+                    depth = "{0:.3f}".format(item.depth)
+
+                if item.temp != "None":
+                    temp = "{0:.3f}".format(item.temp)
+
+                if item.pres != "None":
+                    pres = "{0:.3f}".format(item.pres)
+
+                if item.psal != "None":
+                    sal = "{0:.3f}".format(item.psal)
+
+                record_datetime = item.dt
+                platform_number = item.platform_number
+                cycle_number = item.cycle_number
+
+                if temp == 99999 and pres == 99999 and sal == 99999:
+                    continue
+
+                writer.writerow([
+                    platform_number,
+                    cycle_number,
+                    lat,
+                    lon,
+                    record_datetime,
+                    depth,
+                    pres,
+                    temp,
+                    sal
+                ])
+
+def is_file_recent_by_creation_time(file_path: str, max_age_days: int = 14) -> bool:
+    """
+    Проверяет, что дата создания файла отличается от текущей даты
+    не больше чем на max_age_days дней.
+
+    Примечание: на Windows os.path.getctime() возвращает время создания файла.
+    На Linux/Unix это обычно время последнего изменения метаданных файла,
+    так как настоящая дата создания доступна не во всех файловых системах.
+    """
+    file_creation_dt = datetime.datetime.fromtimestamp(os.path.getctime(file_path))
+    current_dt = datetime.datetime.now()
+    return abs(current_dt - file_creation_dt) <= datetime.timedelta(days=max_age_days)
+
+def process_file(input_filename: str, output_path: str, lon_min = -180, lon_max = 180, lat_min = -90, lat_max = 90, days_ago = 360):
     """
         Processes the input netCDF file
 
@@ -229,6 +238,7 @@ def process_file(input_filename, output_path, lon_min = -180, lon_max = 180, lat
     cycle_number = ds['CYCLE_NUMBER'].values
     size_lon = len(lons)
     size_lev = len(temp[0,:])
+    lastdepth = 0
     for i in range(size_lon):
         for j in range(size_lev):
             date = datetime.datetime.strptime(str(dt_data[i]).split("T")[0], "%Y-%m-%d").date()
@@ -236,10 +246,16 @@ def process_file(input_filename, output_path, lon_min = -180, lon_max = 180, lat
                 if lats[i] > lat_min and lats[i] < lat_max and lons[i] > lon_min and lons[i] < lon_max:
                     if str(dt_data[i]).split("T")[0] not in finish_dict.keys():
                         finish_dict[str(dt_data[i]).split("T")[0]] = []
+                    if j != 0:
+                        prev_pressure = pres[i, j-1]
+                    else:
+                        prev_pressure = 0
+                        lastdepth = 0
+                    depth = getDepth_iter(pres[i,j], psal[i,j],temp[i,j], lastdepth, prev_pressure, lats[i])
+                    lastdepth = depth
                     finish_dict[str(dt_data[i]).split("T")[0]].append(
                         Record(lats[i], lons[i],
-                               #getDepth(pres[i, j], lats[i]),
-                               getDepth_unesco(pres[i,j], psal[i,j],temp[i,j], lats[i]),
+                               depth,
                                temp[i,j], pres[i, j], psal[i, j],
                                str(dt_data[i]).split('.')[0], platform_number[i], cycle_number[i]))
     ds.close()
@@ -250,52 +266,72 @@ if __name__ == "__main__":
     parser.add_argument(
         "--input_dir", "-i",
         # required=True,
-        default="./",
+        default="./data/DR/",
         help="Путь к директории с файлами netcdf."
     )
     parser.add_argument(
         "--output_dir", "-o",
         required=False,
-        default="./",
+        default="./output/DR",
         help="Путь для сохранения выходных файлов (по умолчанию: ./)."
     )
+
     parser.add_argument(
         "--max_lon", "-max_l",
         required=False,
+        type=float,
         default=180,
-        help="Путь к директории с файлами netcdf."
+        help="Максимальная долгота."
     )
+
     parser.add_argument(
         "--min_lon", "-min_l",
         required=False,
+        type=float,
         default=-180,
-        help="Путь для сохранения выходных файлов (по умолчанию: ./)."
+        help="Минимальная долгота."
     )
+
     parser.add_argument(
         "--max_lat", "-max_lat",
         required=False,
+        type=float,
         default=90,
-        help="Путь к директории с файлами netcdf."
+        help="Максимальная широта."
     )
+
     parser.add_argument(
         "--min_lat", "-min_lat",
         required=False,
+        type=float,
         default=-90,
-        help="Путь для сохранения выходных файлов (по умолчанию: ./)."
+        help="Минимальная широта."
     )
+
     parser.add_argument(
         "--days_ago", "-d",
         required=False,
+        type=int,
         default=120,
-        help="Путь к директории с файлами netcdf."
+        help="Количество дней для фильтрации записей внутри netCDF по полю JULD."
     )
-    input_path = parser.parse_args().input_dir
-    output_path = parser.parse_args().output_dir
-    lat_min = parser.parse_args().min_lat
-    lat_max = parser.parse_args().max_lat
-    lon_min = parser.parse_args().min_lon
-    lon_max = parser.parse_args().max_lon
-    days_ago = parser.parse_args().days_ago
+    parser.add_argument(
+        "--file_max_age_days", "-fad",
+        required=False,
+        type=int,
+        default=14,
+        help="Максимальный возраст файла в днях по дате создания. По умолчанию: 14."
+    )
+    args = parser.parse_args()
+
+    input_path = args.input_dir
+    output_path = args.output_dir
+    lat_min = args.min_lat
+    lat_max = args.max_lat
+    lon_min = args.min_lon
+    lon_max = args.max_lon
+    days_ago = args.days_ago
+    file_max_age_days = args.file_max_age_days
 
 
     processed_files = dict()
@@ -313,13 +349,20 @@ if __name__ == "__main__":
 
     files = [f for f in os.listdir(input_path) if os.path.isfile(os.path.join(input_path, f))]
     for file in files:
-        if file.endswith(".nc") and file not in processed_files.keys():
-            print("Обработка файла: ", file)
-            # try:
-            process_file(input_path + file, output_path, lon_min, lon_max, lat_min, lat_max, days_ago)
-            new_processed_files[file] = True
+        file_full_path = os.path.join(input_path, file)
 
-    with open(log_path, 'a', newline='', encoding='utf-8-sig') as f:
-        for file in new_processed_files.keys():
-            f.write(file + "\n")
+        if not file.endswith(".nc"):
+            continue
 
+        if file in processed_files.keys():
+            continue
+
+        if not is_file_recent_by_creation_time(file_full_path, file_max_age_days):
+            file_creation_dt = datetime.datetime.fromtimestamp(os.path.getctime(file_full_path))
+            print(f"Пропуск файла по дате создания: {file} ({file_creation_dt:%Y-%m-%d %H:%M:%S})")
+            continue
+
+        print("Обработка файла: ", file)
+        # try:
+        process_file(file_full_path, output_path, lon_min, lon_max, lat_min, lat_max, days_ago)
+        new_processed_files[file] = True
