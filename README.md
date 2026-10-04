@@ -49,3 +49,6 @@ TEOS-10 depth calculation
         ▼
  CSV files by observation date
 ```
+## License
+
+This project is licensed under the MIT License.
