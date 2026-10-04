@@ -80,8 +80,8 @@ class Record:
     """
         The Record field for final_dict (description of the fields - names of relevant fields from netCDF files)
         Args:
-            lat: LONGITUDE.
-            lon: LATITUDE.
+            lat: LATITUDE.
+            lon: LONGITUDE.
             depth: calculated by getDepth() function.
             temp: TEMP.
             pres: PRES.
