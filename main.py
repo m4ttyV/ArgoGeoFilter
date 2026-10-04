@@ -1,6 +1,6 @@
 import argparse
 import csv
-import os\
+import os
 import datetime
 import numpy as np
 import xarray as xr
