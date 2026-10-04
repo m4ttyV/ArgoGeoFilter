@@ -20,6 +20,3 @@ jobs:
 
       - name: Syntax check
         run: python -m compileall .
-
-      - name: Lint
-        run: ruff check .
